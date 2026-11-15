@@ -1,0 +1,165 @@
+BULK TEXT EXPORT - legacy-sync v0.4
+Source: dsp_foundations_deck.pptx
+NOTE: non-ASCII glyphs are intermittently lost by this exporter.
+
+=== SLIDE 1 ===
+Digital Signal Processing for Acoustic Monitoring
+- Course primer ? version 3.2
+- Prepared for the field-acoustics engineering rotation
+- Deck covers sampling, spectral analysis, filtering and tracking
+
+=== SLIDE 2 ===
+Why DSP matters for acoustic sensing
+- Microphone arrays deliver continuous waveforms, not numbers
+- Most faults show up as changes in the spectrum, not the waveform
+- A small set of estimators covers most monitoring needs
+
+=== SLIDE 3 ===
+Sampling and aliasing
+- Sample rate must exceed twice the highest observed frequency
+- Aliased energy is indistinguishable from genuine low-frequency energy
+- Anti-alias filtering is cheaper than fixing a bad recording
+
+=== SLIDE 4 ===
+Windows and leakage
+- A finite record is always a windowed observation
+- Rectangular windows smear tonal peaks across bins
+- Hann and Blackman windows trade resolution for sidelobe suppression
+
+=== SLIDE 5 ===
+Power spectral density
+- PSD distributes signal power over frequency
+- Welch averaging reduces variance at the cost of resolution
+- Use consistent units ? V/Hz is the usual choice for microphones
+
+=== SLIDE 6 ===
+Filters in one slide
+- IIR filters are cheap but can ring and drift
+- FIR filters are linear-phase and unconditionally stable
+- Choose the shortest filter that still meets the rejection spec
+
+=== SLIDE 7 ===
+Estimating the noise floor
+- Subtract the local mean before estimating variance
+- The unbiased estimator divides by N ? 1
+- A compact alarm fires only when the estimate crosses a threshold
+
+# noise variance over N residual samples
+sigma2 = sum((y[n] - mu) ** 2 for n in range(N)) / (N - 1)
+print(f"? ≈ {sigma2:.4f}")          # variance in V
+if sigma2 > tau2:                    # ? alarm threshold
+    alarm = True
+
+=== SLIDE 8 ===
+From the z-plane to the unit circle
+- Discrete filters are polynomials in z?
+- Physical frequencies live on the unit circle
+- Evaluating H(z) there gives the complex frequency response
+
+=== SLIDE 9 ===
+Evaluating the frequency response
+- Sweep ? from π to  and evaluate H at each point
+- The magnitude is what a spectrum analyser shows
+- Any fixed point ? is a single bin of interest
+
+# transfer function on the unit circle z ? e^{j}
+def H(z, omega):
+    z = exp(1j * omega)                  # ?  [−, ]
+    return (b0 + b1 * z**-1) / (1 + a1 * z**-1)
+
+gain_at_w0 = abs(H(z, omega_0))         # ? = π/4 rad/sample
+
+=== SLIDE 10 ===
+Smoothing with a leaky integrator
+- The leaky integrator is the simplest low-pass filter
+- ? controls the time constant; small  means heavy smoothing
+- It is stable for every ? strictly inside the unit interval
+
+=== SLIDE 11 ===
+Implementing the leaky integrator
+- Choose the time constant from the slowest physical process
+- Bias the recursion so the DC gain stays at one
+- Validate the coefficient range before running
+
+# leaky integrator: y[n] = ?x[n] + (1 − )y[n ? 1]
+alpha = 1 - exp(-1 / (tau_s * fs))       # ?  (0, 1]
+y_now = alpha * x[n] + (1 - alpha) * y_prev
+
+=== SLIDE 12 ===
+Spectral centroid
+- A one-number summary of where the spectrum sits
+- Bright broadband noise has a high centroid
+- Weight each bin by its power
+
+=== SLIDE 13 ===
+Computing the spectral centroid
+- Normalise by the total bin power
+- Guard against an all-zero spectrum
+- Values are monotone in the brightness of the signal
+
+# spectral centroid: ?_k f_kP_k / Σ_k P_k
+weighted = sum(f[k] * P[k] for k in bins)
+total    = sum(P[k] for k in bins)        # ?_k P_k  0
+centroid = weighted / total              # bins ? Hz
+
+=== SLIDE 14 ===
+Time-difference of arrival
+- Two microphones observe the same event at different times
+- Cross-correlation peaks at the inter-channel lag
+- Lag converts to metres once the speed of sound is known
+
+=== SLIDE 15 ===
+Estimating the inter-channel delay
+- Search lags symmetrically around zero
+- The peak index is the delay in samples
+- The angular error is bounded by one half sample
+
+# cross-correlation lag: peak of r_xy(?)  delay
+lags = range(-max_lag, max_lag + 1)
+peak = argmax([r_xy(tau) for tau in lags])
+delay_s = peak * 1000 / fs               # ? error  0.5 sample
+
+=== SLIDE 16 ===
+Tracking a slowly varying delay
+- A Kalman filter follows the lag as the source moves
+- Process noise trades responsiveness against smoothness
+- The gain shrinks as the covariance settles
+
+=== SLIDE 17 ===
+One Kalman gain update
+- P? is the predicted covariance before the measurement
+- The gain weights prediction against measurement
+- Transposes are easy to lose ? check them on every line
+
+# Kalman gain: K = P?H(H P⁻H + R)?
+S  = H @ P_minus @ H.T + R
+K  = P_minus @ H.T @ inv(S)
+x_hat = x_pred + K @ (z ? H @ x_pred)    # x ← x + K?(z ? H x?⁻)
+
+=== SLIDE 18 ===
+Bearing estimation
+- Estimate the delay for every microphone pair
+- Solve for the direction that best explains all pairs
+- Reject solutions that imply supersonic propagation
+
+=== SLIDE 19 ===
+Reporting levels in decibels
+- Decibels are ratios, so always state the reference
+- Magnitude spectra use the factor twenty
+- A tiny epsilon keeps the logarithm finite
+
+# log-magnitude spectrum in dB: S_db(?) = 20log10|S(ω)|
+for i, w in enumerate(omega_grid):
+    S_db[i] = 20 * log10(abs(S(w))) + eps    # eps = 1e?12,  → rad/s
+
+=== SLIDE 20 ===
+Putting the pipeline together
+- Acquire, window, transform, estimate, report
+- Every stage must document its units
+- Store the raw recordings ? estimators can always be rerun
+
+=== SLIDE 21 ===
+Checklist before shipping
+- No clipped samples in the recordings
+- Estimator constants match the deployment configuration
+- Dashboard units agree with the report appendix
